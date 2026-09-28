@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light: warm off-white, dark text, teal accent -->
+    <style name="Theme.SalaWaqt" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorButtonNormal">@color/light_button</item>
+        <item name="android:windowBackground">@color/light_background</item>
+        <item name="android:textColorPrimary">@color/light_text</item>
+        <item name="android:textColorSecondary">@color/light_text_dim</item>
+        <item name="android:statusBarColor">@color/light_background</item>
+        <item name="android:navigationBarColor">@color/light_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Dark: near-black, light text, lighter teal accent -->
+    <style name="Theme.SalaWaqt.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/accent_dark</item>
+        <item name="android:colorPrimary">@color/accent_dark</item>
+        <item name="android:colorButtonNormal">@color/dark_button</item>
+        <item name="android:windowBackground">@color/dark_background</item>
+        <item name="android:textColorPrimary">@color/dark_text</item>
+        <item name="android:textColorSecondary">@color/dark_text_dim</item>
+        <item name="android:statusBarColor">@color/dark_background</item>
+        <item name="android:navigationBarColor">@color/dark_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

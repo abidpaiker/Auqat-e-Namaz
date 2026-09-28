@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Green Dome of Masjid an-Nabawi with a minaret, drawn as a simple silhouette.
+     Everything sits inside the 66dp safe circle of the 108dp adaptive-icon canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+
+    <!-- minaret: shaft, balcony, cap, finial -->
+    <path android:fillColor="#F2EFE6" android:pathData="M27,74 L27,46 L33,46 L33,74 Z" />
+    <path android:fillColor="#F2EFE6" android:pathData="M25,52 L35,52 L35,55 L25,55 Z" />
+    <path android:fillColor="#F2EFE6" android:pathData="M27,46 L30,38 L33,46 Z" />
+    <path android:fillColor="#F2EFE6" android:pathData="M29.4,38 L30.6,38 L30.6,34 L29.4,34 Z" />
+
+    <!-- main building base -->
+    <path android:fillColor="#F2EFE6" android:pathData="M36,74 L36,58 L82,58 L82,74 Z" />
+    <!-- arched doorway -->
+    <path android:fillColor="#1F5F5B" android:pathData="M54,74 L54,66 A5,5 0 0,1 64,66 L64,74 Z" />
+
+    <!-- drum under the dome -->
+    <path android:fillColor="#F2EFE6" android:pathData="M42,58 L42,54 L76,54 L76,58 Z" />
+
+    <!-- the green dome: a slightly onion-shaped arc -->
+    <path android:fillColor="#3E9B5F"
+        android:pathData="M42,54 C42,44 48,38 54,34 C56,32.6 58,31.4 59,30 C60,31.4 62,32.6 64,34 C70,38 76,44 76,54 Z" />
+    <!-- dome highlight -->
+    <path android:fillColor="#5DBF7E"
+        android:pathData="M47,52 C47,45 51,40 56,37 C53,41 50,46 50,52 Z" />
+
+    <!-- finial with crescent -->
+    <path android:fillColor="#F2EFE6" android:pathData="M58.3,30 L59.7,30 L59.7,24 L58.3,24 Z" />
+    <path android:fillColor="#F2EFE6"
+        android:pathData="M59,17 A4,4 0 1,0 63,23 A3,3 0 1,1 59,17 Z" />
+
+    <!-- ground line -->
+    <path android:fillColor="#F2EFE6" android:pathData="M22,74 L86,74 L86,77 L22,77 Z" />
+</vector>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#1F5F5B</color>
+    <color name="accent">#1F7A6E</color>          <!-- teal, used in both themes -->
+    <color name="accent_dark">#5FC2B2</color>     <!-- lighter teal for dark backgrounds -->
+
+    <color name="light_background">#FAF8F3</color>
+    <color name="light_text">#1E2A28</color>
+    <color name="light_text_dim">#6B7573</color>
+    <color name="light_button">#E6F0EE</color>
+
+    <color name="dark_background">#121615</color>
+    <color name="dark_text">#ECEBE6</color>
+    <color name="dark_text_dim">#9AA3A0</color>
+    <color name="dark_button">#243330</color>
+</resources>

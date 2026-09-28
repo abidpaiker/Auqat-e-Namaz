@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Location: prayer times and Qibla are computed from coordinates. Background location lets the
+         alarm receiver refresh the last known fix when it fires, so times follow you while you travel. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Alarms and notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Adhan playback runs as a short foreground service so it is not killed mid-call -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- No INTERNET permission. The app cannot talk to the network at all. -->
+
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.SalaWaqt"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Portrait-locked so the compass needs no coordinate remapping -->
+        <activity android:name=".QiblaActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".SettingsActivity" android:exported="false" />
+
+        <receiver android:name=".AlarmReceiver" android:exported="false" />
+
+        <!-- Protected system broadcasts; only the OS can send these -->
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <service android:name=".AdhanService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
+    </application>
+</manifest>
