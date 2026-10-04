@@ -3,6 +3,7 @@ package org.salawaqt.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -132,11 +133,26 @@ class MainActivity : Activity() {
             if (Locator.hasPermission(this)) {
                 refreshLocation()
                 // Background location (Android 10+) lets the alarm receiver pick up a newer fix while you travel.
-                // It must be requested on its own, after foreground location. On 11+ this opens a settings page.
+                // It must be requested on its own, after foreground location, and Play policy requires the app to
+                // explain why before the system prompt appears. On 11+ the prompt opens a settings page.
                 if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED)
-                    requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2)
+                    explainBackgroundLocation()
             }
         }
+    }
+
+    /** The "prominent disclosure" Google Play requires before asking for background location. */
+    private fun explainBackgroundLocation() {
+        AlertDialog.Builder(this)
+            .setTitle("Location while travelling")
+            .setMessage("Auqat-e-Namaz can check your position a few minutes before each prayer, even when the app is " +
+                "closed, so the adhan is for where you are now and not where you were this morning.\n\n" +
+                "On the next screen choose “Allow all the time” to enable this. Your location is used only to " +
+                "calculate prayer times and never leaves the phone; the app has no internet access.\n\n" +
+                "If you skip this, times update whenever you open the app.")
+            .setPositiveButton("Continue") { _, _ -> requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2) }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     // ---- rendering ----

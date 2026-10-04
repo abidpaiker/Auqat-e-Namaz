@@ -21,8 +21,8 @@ android {
         applicationId = "org.auqatenamaz.app"   // the identity on the phone and in the stores; fixed once published
         minSdk = 26          // java.time, notification channels, adaptive icons — no compat layers needed
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 5
+        versionName = "0.4"
     }
 
     signingConfigs {
