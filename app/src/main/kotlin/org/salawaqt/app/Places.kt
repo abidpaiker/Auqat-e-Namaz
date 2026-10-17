@@ -16,12 +16,16 @@ import kotlin.math.sqrt
  */
 object Places {
     /** [pull] is how many km of extra distance a town's size is worth: 3 km per factor of ten in population. */
-    private class Town(val name: String, val region: String, val lat: Float, val lng: Float, val pull: Float)
+    private class Town(val name: String, val region: String, val country: String, val lat: Float, val lng: Float, val pull: Float)
     @Volatile private var towns: Array<Town>? = null
     @Volatile private var loading = false
 
+    private val pending = ArrayList<() -> Unit>()
+
     fun load(ctx: Context, onLoaded: () -> Unit) {
-        if (towns != null || loading) return
+        if (towns != null) { onLoaded(); return }
+        synchronized(pending) { pending += onLoaded }
+        if (loading) return
         loading = true
         Thread {
             val id = ctx.resources.getIdentifier("cities5000", "raw", ctx.packageName)
@@ -37,17 +41,22 @@ object Places {
                     val country = f[8]
                     val region = if (country == "US" || country == "CA" || country == "AU") f[10] else country
                     val pop = max(f[14].toLongOrNull() ?: 0L, 1000L)
-                    list += Town(f[1], region, lat, lng, 3f * log10(pop.toFloat()))
+                    list += Town(f[1], region, country, lat, lng, 3f * log10(pop.toFloat()))
                 }
             }
             towns = list.toTypedArray()
             loading = false
-            onLoaded()
+            val cbs = synchronized(pending) { val c = ArrayList(pending); pending.clear(); c }
+            for (cb in cbs) cb()
         }.apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
     }
 
     private var cacheKey = 0L
     private var cacheValue: String? = null
+    private var cacheCountry: String? = null
+
+    /** ISO country code of the nearest listed town, or null while loading / if the table is absent. */
+    fun countryAt(lat: Double, lng: Double): String? { nearest(lat, lng); return cacheCountry }
 
     /**
      * e.g. "Bethlehem, PA (4 km)" or null while loading / if the table is absent. Cached per position (called every second).
@@ -59,11 +68,14 @@ object Places {
         val t = towns ?: return null
         val key = (Math.round(lat * 1000) shl 32) xor (Math.round(lng * 1000) and 0xffffffffL)
         if (key == cacheKey && cacheValue != null) return cacheValue
-        cacheValue = find(t, lat, lng); cacheKey = key
+        val b = find(t, lat, lng)
+        cacheValue = b?.let { (town, km) -> "${town.name}, ${town.region}" + (if (km < 1.5f) "" else " (${km.toInt()} km)") }
+        cacheCountry = b?.first?.country
+        cacheKey = key
         return cacheValue
     }
 
-    private fun find(t: Array<Town>, lat: Double, lng: Double): String? {
+    private fun find(t: Array<Town>, lat: Double, lng: Double): Pair<Town, Float>? {
         val cosLat = cos(Math.toRadians(lat)).toFloat()
         var best: Town? = null; var bestScore = Float.MAX_VALUE; var bestKm = 0f
         for (town in t) {
@@ -87,8 +99,6 @@ object Places {
             bestKm = sqrt(bestD) * 111.2f
         }
         val b = best ?: return null
-        val km = bestKm
-        val dist = if (km < 1.5f) "" else " (${km.toInt()} km)"
-        return "${b.name}, ${b.region}$dist"
+        return b to bestKm
     }
 }

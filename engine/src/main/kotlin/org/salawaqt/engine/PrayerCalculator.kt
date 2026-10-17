@@ -23,6 +23,8 @@ enum class Note {
     ISHA_HIGH_LATITUDE,
     /** Polar day/night: no sunrise or sunset today. Times were computed for the nearest latitude that has one. */
     POLAR_LATITUDE_CLAMPED,
+    /** Times came from a published timetable (see [Timetable]) rather than the calculation. */
+    TIMETABLE,
 }
 
 /**
@@ -32,11 +34,15 @@ enum class Note {
 class PrayerTimes internal constructor(
     val date: LocalDate,
     val zone: ZoneId,
-    private val epochSeconds: LongArray,     // indexed by Prayer.ordinal
+    private val epochSeconds: LongArray,     // indexed by Prayer.ordinal; index 6 = Asr under the other shadow rule
     val notes: Set<Note>,
 ) {
     fun instant(p: Prayer): Instant = Instant.ofEpochSecond(epochSeconds[p.ordinal])
     fun at(p: Prayer): ZonedDateTime = instant(p).atZone(zone)
+
+    /** Asr under the shadow rule that was *not* requested (Hanafi if standard was asked for, and vice versa). */
+    val asrOtherInstant: Instant get() = Instant.ofEpochSecond(epochSeconds[OTHER_ASR])
+    val asrOther: ZonedDateTime get() = asrOtherInstant.atZone(zone)
 
     val fajr: ZonedDateTime get() = at(Prayer.FAJR)
     val sunrise: ZonedDateTime get() = at(Prayer.SUNRISE)
@@ -64,6 +70,8 @@ class PrayerTimes internal constructor(
         return last
     }
 
+    internal companion object { const val OTHER_ASR = 6 }
+
     override fun toString(): String =
         Prayer.entries.joinToString(", ", "PrayerTimes($date $zone: ", if (notes.isEmpty()) ")" else " notes=$notes)") {
             "${it.label}=${at(it).toLocalTime()}"
@@ -83,6 +91,7 @@ object PrayerCalculator {
      * at each prayer's own time (two passes), which keeps the result within a few seconds of a full ephemeris.
      */
     fun compute(date: LocalDate, zone: ZoneId, where: Coordinates, params: CalculationParams = CalculationParams()): PrayerTimes {
+        params.timetable?.lookup(date, where)?.let { return fromTimetable(date, zone, it, params) }
         val notes = HashSet<Note>(2)
         val m = params.method
 
@@ -104,39 +113,84 @@ object PrayerCalculator {
         val nextSunrise = timeAt(horizon, lat, solarNoon(anchor + DAY, where.longitude), morning = true) ?: (sunrise + DAY)
         val night = nextSunrise - sunset
 
-        var fajr = timeAt(-m.fajrAngle, lat, noon, morning = true)
-        val fajrPortion = nightPortion(params.highLatitudeRule, m.fajrAngle, night)
+        val fajrAngle = if (m.twilight == Twilight.SEASONAL_ANGLE) seasonalAngle(m.seasonalFajr, date) else m.fajrAngle
+        val ishaAngle = if (m.twilight == Twilight.SEASONAL_ANGLE) seasonalAngle(m.seasonalIsha, date) else m.ishaAngle
+
+        var fajr = timeAt(-fajrAngle, lat, noon, morning = true)
+        if (m.twilight == Twilight.MOONSIGHTING) {
+            // Observation-based bound: Fajr is never earlier than this many minutes before sunrise.
+            val safe = sunrise - Moonsighting.minutes(date, where.latitude, morning = true) * 60
+            if (fajr == null || fajr < safe) fajr = safe
+        }
+        val fajrPortion = nightPortion(params.highLatitudeRule, fajrAngle, night)
         if (fajr == null || sunrise - fajr > fajrPortion) { fajr = sunrise - fajrPortion; notes += Note.FAJR_HIGH_LATITUDE }
 
         var isha: Double
         if (m.ishaIntervalMinutes > 0) {
-            isha = sunset + m.ishaIntervalMinutes * 60.0
+            isha = sunset + (m.ishaIntervalMinutes + m.maghribMinutes) * 60.0
         } else {
-            val t = timeAt(-m.ishaAngle, lat, noon, morning = false)
-            val portion = nightPortion(params.highLatitudeRule, m.ishaAngle, night)
+            var t = timeAt(-ishaAngle, lat, noon, morning = false)
+            if (m.twilight == Twilight.MOONSIGHTING) {
+                val safe = sunset + Moonsighting.minutes(date, where.latitude, morning = false) * 60
+                if (t == null || t > safe) t = safe
+            }
+            val portion = nightPortion(params.highLatitudeRule, ishaAngle, night)
             if (t == null || t - sunset > portion) { isha = sunset + portion; notes += Note.ISHA_HIGH_LATITUDE } else isha = t
         }
 
-        // --- Maghrib: sunset, or a small depression angle for methods that use one ---
-        val maghrib = if (m.maghribAngle > 0) timeAt(-m.maghribAngle, lat, noon, morning = false) ?: sunset else sunset
+        // --- Maghrib: sunset, or a small depression angle for methods that use one, plus any fixed margin ---
+        val maghrib = (if (m.maghribAngle > 0) timeAt(-m.maghribAngle, lat, noon, morning = false) ?: sunset else sunset) +
+            m.maghribMinutes * 60.0
 
         // --- Asr: altitude at which shadow = noon shadow + factor × height ---
         val declAsr = Sun.position(Sun.julianDay(noon + 3 * 3600)).declination
-        val asrAlt = Math.toDegrees(atan(1.0 / (params.asrRule.shadowFactor + tan(Math.toRadians(abs(lat - declAsr))))))
-        // Only in the polar-clamped case can the sun fail to reach the Asr altitude; then take mid-afternoon.
-        val asr = timeAt(asrAlt, lat, noon, morning = false) ?: (noon + (sunset - noon) / 2)
+        fun asrFor(rule: AsrRule): Double {
+            val alt = Math.toDegrees(atan(1.0 / (rule.shadowFactor + tan(Math.toRadians(abs(lat - declAsr))))))
+            // Only in the polar-clamped case can the sun fail to reach the Asr altitude; then take mid-afternoon.
+            return timeAt(alt, lat, noon, morning = false) ?: (noon + (sunset - noon) / 2)
+        }
+        val asr = asrFor(params.asrRule)
+        val asrOther = asrFor(if (params.asrRule == AsrRule.STANDARD) AsrRule.HANAFI else AsrRule.STANDARD)
 
-        val dhuhr = noon + DHUHR_OFFSET_SECONDS
+        val dhuhr = noon + DHUHR_OFFSET_SECONDS + m.dhuhrMinutes * 60.0
 
         val a = params.adjustments
-        val out = LongArray(6)
+        val out = LongArray(7)
         out[Prayer.FAJR.ordinal]    = (fajr    + a.fajr    * 60).roundToLong()
-        out[Prayer.SUNRISE.ordinal] = (sunrise + a.sunrise * 60).roundToLong()
+        out[Prayer.SUNRISE.ordinal] = (sunrise + (a.sunrise + m.sunriseMinutes) * 60).roundToLong()
         out[Prayer.DHUHR.ordinal]   = (dhuhr   + a.dhuhr   * 60).roundToLong()
         out[Prayer.ASR.ordinal]     = (asr     + a.asr     * 60).roundToLong()
         out[Prayer.MAGHRIB.ordinal] = (maghrib + a.maghrib * 60).roundToLong()
         out[Prayer.ISHA.ordinal]    = (isha    + a.isha    * 60).roundToLong()
+        out[PrayerTimes.OTHER_ASR]  = (asrOther + a.asr    * 60).roundToLong()
         return PrayerTimes(date, zone, out, notes)
+    }
+
+    /** A timetable entry (minutes after 00:00 UTC of [date]) as PrayerTimes, with the user's minute adjustments applied. */
+    private fun fromTimetable(date: LocalDate, zone: ZoneId, e: Timetable.Entry, params: CalculationParams): PrayerTimes {
+        val midnight = date.atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond()
+        val a = params.adjustments
+        val hanafi = params.asrRule == AsrRule.HANAFI
+        val out = LongArray(7)
+        out[Prayer.FAJR.ordinal]    = midnight + (e.fajr + a.fajr) * 60L
+        out[Prayer.SUNRISE.ordinal] = midnight + (e.sunrise + a.sunrise) * 60L
+        out[Prayer.DHUHR.ordinal]   = midnight + (e.dhuhr + a.dhuhr) * 60L
+        out[Prayer.ASR.ordinal]     = midnight + ((if (hanafi) e.asrHanafi else e.asrStandard) + a.asr) * 60L
+        out[Prayer.MAGHRIB.ordinal] = midnight + (e.maghrib + a.maghrib) * 60L
+        out[Prayer.ISHA.ordinal]    = midnight + (e.isha + a.isha) * 60L
+        out[PrayerTimes.OTHER_ASR]  = midnight + ((if (hanafi) e.asrStandard else e.asrHanafi) + a.asr) * 60L
+        return PrayerTimes(date, zone, out, setOf(Note.TIMETABLE))
+    }
+
+    /** angle = c0 + Σ ck·cos(kω) + sk·sin(kω), ω = 2π·(dayOfYear − 1)/365.25. */
+    internal fun seasonalAngle(c: DoubleArray, date: LocalDate): Double {
+        if (c.isEmpty()) return 18.0
+        val w = 2 * Math.PI * (date.dayOfYear - 1) / 365.25
+        var a = c[0]
+        var k = 1
+        var i = 1
+        while (i + 1 < c.size) { a += c[i] * kotlin.math.cos(k * w) + c[i + 1] * kotlin.math.sin(k * w); i += 2; k++ }
+        return a
     }
 
     /**

@@ -57,6 +57,20 @@ object Ui {
         return id
     }
 
+    /** The "prominent disclosure" Google Play requires before the system's "Allow all the time" prompt. */
+    fun backgroundLocationDialog(activity: android.app.Activity, onContinue: () -> Unit) {
+        android.app.AlertDialog.Builder(activity)
+            .setTitle("Location while travelling")
+            .setMessage("Auqat-e-Namaz can check your position a few minutes before each prayer, even when the app is " +
+                "closed, so the adhan is for where you are now and not where you were this morning.\n\n" +
+                "On the next screen choose \u201cAllow all the time\u201d to enable this. Your location is used only to " +
+                "calculate prayer times and never leaves the phone; the app has no internet access.\n\n" +
+                "If you skip this, times update whenever you open the app.")
+            .setPositiveButton("Continue") { _, _ -> onContinue() }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
     fun button(ctx: Context, label: String, onClick: () -> Unit): Button = Button(ctx).apply {
         text = label
         isAllCaps = false

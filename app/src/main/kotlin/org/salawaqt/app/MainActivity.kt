@@ -3,7 +3,6 @@ package org.salawaqt.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -31,7 +30,10 @@ class MainActivity : Activity() {
     private lateinit var nextName: TextView
     private lateinit var nextIn: TextView
     private lateinit var dateLine: TextView
-    private lateinit var rows: List<Pair<TextView, TextView>>
+    private lateinit var rows: List<Pair<TextView, TextView>>   // one per Prayer
+    private lateinit var asr2Row: android.view.View                // the other shadow rule's Asr, shown on request
+    private lateinit var asr2Name: TextView
+    private lateinit var asr2Time: TextView
     private lateinit var status: TextView
     private lateinit var warnings: TextView
 
@@ -51,6 +53,8 @@ class MainActivity : Activity() {
         prefs = Prefs(this)
         Notifications.ensureChannels(this)
         Places.load(this) { runOnUiThread { render() } }
+        // First launch on a fresh install: walk through location, method, Asr, alerts and battery once.
+        if (!prefs.setupDone) startActivity(Intent(this, SetupActivity::class.java))
 
         val root = Ui.column(this)
         nextName = Ui.text(this, "—", 36f, bold = true, accent = true)
@@ -69,6 +73,15 @@ class MainActivity : Activity() {
             r.addView(name); r.addView(time)
             r.setPadding(0, dp(10), 0, dp(10))
             root.addView(r)
+            if (p == Prayer.ASR) {
+                val r2 = Ui.row(this)
+                asr2Name = Ui.text(this, "", 20f); asr2Time = Ui.text(this, "", 20f)
+                Ui.weight(asr2Name, 1f)
+                r2.addView(asr2Name); r2.addView(asr2Time)
+                r2.setPadding(0, dp(10), 0, dp(10))
+                root.addView(r2)
+                asr2Row = r2
+            }
             name to time
         }
 
@@ -98,6 +111,11 @@ class MainActivity : Activity() {
         Scheduler.reschedule(this)   // settings may have changed; also self-heals the alarm chain
     }
 
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN && AdhanService.playing) { AdhanService.stop(this); return true }
+        return super.onKeyDown(keyCode, event)
+    }
+
     override fun onPause() {
         super.onPause()
         handler.removeCallbacks(tick)
@@ -118,7 +136,7 @@ class MainActivity : Activity() {
 
     /** Ask once. If the user says no, the screen explains what is missing instead of nagging on every resume. */
     private fun requestPermissionsIfNeeded() {
-        if (prefs.permissionsAsked) return
+        if (prefs.permissionsAsked || !prefs.setupDone) return   // the first-run setup asks in its own order
         val wanted = ArrayList<String>()
         if (!Locator.hasPermission(this)) { wanted += Manifest.permission.ACCESS_FINE_LOCATION; wanted += Manifest.permission.ACCESS_COARSE_LOCATION }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
@@ -142,18 +160,8 @@ class MainActivity : Activity() {
     }
 
     /** The "prominent disclosure" Google Play requires before asking for background location. */
-    private fun explainBackgroundLocation() {
-        AlertDialog.Builder(this)
-            .setTitle("Location while travelling")
-            .setMessage("Auqat-e-Namaz can check your position a few minutes before each prayer, even when the app is " +
-                "closed, so the adhan is for where you are now and not where you were this morning.\n\n" +
-                "On the next screen choose “Allow all the time” to enable this. Your location is used only to " +
-                "calculate prayer times and never leaves the phone; the app has no internet access.\n\n" +
-                "If you skip this, times update whenever you open the app.")
-            .setPositiveButton("Continue") { _, _ -> requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2) }
-            .setNegativeButton("Not now", null)
-            .show()
-    }
+    private fun explainBackgroundLocation() =
+        Ui.backgroundLocationDialog(this) { requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2) }
 
     // ---- rendering ----
 
@@ -177,32 +185,45 @@ class MainActivity : Activity() {
         }
 
         // Recompute only when the inputs change (date, place, settings); otherwise once a day is plenty.
-        val key = "$today|${where.latitude}|${where.longitude}|${where.elevation}|${prefs.params()}|$zone"
+        val key = "$today|${where.latitude}|${where.longitude}|${prefs.methodId}|${prefs.customFajrAngle}|${prefs.customIshaAngle}|${prefs.customIshaInterval}|${prefs.hanafiAsr}|${Prayer.entries.map { prefs.adjustment(it) }}|$zone"
         val times = if (key == cacheKey && timesCache != null) timesCache!! else
             PrayerCalculator.compute(today, zone, where, prefs.params()).roundedToMinute().also { timesCache = it; cacheKey = key }
 
         // Islamic date: advances at Maghrib, not at midnight.
         dateLine.text = dateLine.text.toString() + "\n" + Ui.hijriDate(now, times.instant(Prayer.MAGHRIB), zone, prefs.hijriAdjust)
 
-        val up = PrayerCalculator.next(now, zone, where, prefs.params(), skipSunrise = true)
-        val cur = up.current
-        nextName.text = up.prayer.label
-        nextIn.text = "in " + Ui.countdown(up.time.toEpochSecond() - now.epochSecond) + " · " + fmt.format(up.time)
+        val (up, cur) = Events.around(prefs, now, zone, skipSunrise = true)
+        if (up != null) {
+            nextName.text = up.label
+            nextIn.text = "in " + Ui.countdown(up.time.epochSecond - now.epochSecond) + " · " + fmt.format(up.time.atZone(zone))
+        }
+        val currentKey = if (cur != null && !cur.isSunrise) cur.key else null
 
-        for ((i, p) in Prayer.entries.withIndex()) {
-            val (name, time) = rows[i]
-            val z = times.at(p)
-            var s = fmt.format(z)
-            if (z.toLocalDate() != today) s += " (${if (z.toLocalDate() > today) "next day" else "prev. day"})"
-            time.text = s
-            val current = cur == p && p != Prayer.SUNRISE
-            val style = if (current) Typeface.BOLD else Typeface.NORMAL
-            name.setTypeface(Typeface.DEFAULT, style); time.setTypeface(Typeface.DEFAULT, style)
+        fun style(name: TextView, time: TextView, current: Boolean, at: Instant) {
+            val st = if (current) Typeface.BOLD else Typeface.NORMAL
+            name.setTypeface(Typeface.DEFAULT, st); time.setTypeface(Typeface.DEFAULT, st)
             val color = Ui.color(this, if (current) android.R.attr.colorAccent else android.R.attr.textColorPrimary)
             name.setTextColor(color); time.setTextColor(color)
-            name.alpha = if (current || times.instant(p) > now) 1f else 0.5f   // dim what has passed today
+            name.alpha = if (current || at > now) 1f else 0.5f   // dim what has passed today
             time.alpha = name.alpha
         }
+        fun fmtDay(z: java.time.ZonedDateTime): String {
+            var s = fmt.format(z)
+            if (z.toLocalDate() != today) s += " (${if (z.toLocalDate() > today) "next day" else "prev. day"})"
+            return s
+        }
+        for ((i, p) in Prayer.entries.withIndex()) {
+            val (name, time) = rows[i]
+            name.text = Events.label(prefs, p.name)
+            time.text = fmtDay(times.at(p))
+            style(name, time, currentKey == p.name, times.instant(p))
+        }
+        if (prefs.showBothAsr) {
+            asr2Row.visibility = android.view.View.VISIBLE
+            asr2Name.text = Events.label(prefs, Prefs.ASR2)
+            asr2Time.text = fmtDay(times.asrOther)
+            style(asr2Name, asr2Time, currentKey == Prefs.ASR2, times.asrOtherInstant)
+        } else asr2Row.visibility = android.view.View.GONE
 
         // Status line: where the numbers come from
         val src = if (prefs.manualLocation) "Manual location" else {
@@ -223,6 +244,13 @@ class MainActivity : Activity() {
             w.append("ℹ High latitude: the sun does not reach the Fajr/Isha angle. Times use the middle-of-night rule.\n")
         if (Note.POLAR_LATITUDE_CLAMPED in times.notes)
             w.append("ℹ Polar day/night: times follow the nearest latitude with a sunrise.\n")
+        if (Note.TIMETABLE in times.notes) {
+            val km = LondonTimetable.distanceKm(where)
+            if (km > LondonTimetable.FAR_KM)
+                w.append("⚠ You are ${km.toInt()} km from London; the London timetable may not suit here. Consider \u201cUnited Kingdom (calculated)\u201d in Settings.\n")
+            else
+                w.append("ℹ Times are from the London Unified Prayer Timetable (East London Mosque).\n")
+        }
         if (prefs.notificationsEnabled) {
             val am = getSystemService(AlarmManager::class.java)
             if (am != null && !Scheduler.canScheduleExact(am))

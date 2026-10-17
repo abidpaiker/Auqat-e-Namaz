@@ -22,7 +22,23 @@ class AdhanService : Service() {
     companion object {
         const val ACTION_PLAY = "org.salawaqt.app.PLAY"
         const val ACTION_STOP = "org.salawaqt.app.STOP"
+        /** True while an adhan is playing, so the app's screens can turn volume-down into "stop". */
+        @Volatile var playing = false
+        fun stop(ctx: android.content.Context) { if (playing) ctx.startService(Intent(ctx, AdhanService::class.java).setAction(ACTION_STOP)) }
     }
+
+    /**
+     * Second line of defence for the volume keys: when the system handles volume-down itself (some phones route
+     * the keys past our media session after a few seconds), the volume goes down — and we stop on that.
+     */
+    private val volumeWatcher = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context, i: Intent) {
+            val now = i.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+            val before = i.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
+            if (now in 0 until before) stop()
+        }
+    }
+    private var watching = false
 
     private var player: MediaPlayer? = null
     private var session: MediaSession? = null
@@ -57,10 +73,21 @@ class AdhanService : Service() {
         if (intent?.action == ACTION_STOP || intent == null) { stop(); return START_NOT_STICKY }
 
         val label = intent.getStringExtra(Scheduler.EXTRA_PRAYER) ?: "Prayer"
+        val key = intent.getStringExtra(Scheduler.EXTRA_KEY) ?: Prayer.entries.firstOrNull { it.label == label }?.name
         val at = intent.getLongExtra(Scheduler.EXTRA_AT, System.currentTimeMillis())
         // Already playing this adhan (e.g. the alarm re-fired after a location change): keep going, do not restart.
         if (player?.isPlaying == true && playingLabel == label) return START_NOT_STICKY
         playingLabel = label
+        playing = true
+        if (!watching) {
+            val filter = android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+            runCatching {
+                // Android 13+ wants the export flag; a system broadcast still reaches a non-exported receiver.
+                if (Build.VERSION.SDK_INT >= 33) registerReceiver(volumeWatcher, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+                else registerReceiver(volumeWatcher, filter)
+            }
+            watching = true
+        }
         val notification = Notifications.build(this, Notifications.CHANNEL_ADHAN, label, at, stopAction = true)
         if (Build.VERSION.SDK_INT >= 29)
             startForeground(Notifications.ID_ADHAN, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -68,9 +95,8 @@ class AdhanService : Service() {
             startForeground(Notifications.ID_ADHAN, notification)
 
         val prefs = Prefs(this)
-        val prayer = Prayer.entries.firstOrNull { it.label == label }
-        val custom = prayer?.let { prefs.adhanFile(it) }
-        val bundled = if (prayer == Prayer.FAJR) R.raw.adhan_fajr else R.raw.adhan
+        val custom = key?.let { prefs.adhanFile(it) }
+        val bundled = (if (key != null) prefs.bundledFor(key) else Bundled.default(Prayer.DHUHR.name)).resId
 
         player?.release()
         session?.release(); grabVolumeKeys()
@@ -83,10 +109,16 @@ class AdhanService : Service() {
             if (!ok) {
                 reset()
                 setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                val afd = resources.openRawResourceFd(bundled)
-                setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
-                prepare()
+                val bundledOk = runCatching {
+                    resources.openRawResourceFd(bundled).use { afd -> setDataSource(afd.fileDescriptor, afd.startOffset, afd.length) }
+                    prepare()
+                }.isSuccess
+                if (!bundledOk) {
+                    // Nothing playable (should not happen with the shipped files): never crash at prayer time — notify instead.
+                    Notifications.showPrayer(this@AdhanService, label, at)
+                    this@AdhanService.stop()
+                    return START_NOT_STICKY
+                }
             }
             start()
         }
@@ -97,12 +129,16 @@ class AdhanService : Service() {
         player?.let { runCatching { it.stop() }; it.release() }
         player = null
         playingLabel = null
+        playing = false
+        if (watching) { runCatching { unregisterReceiver(volumeWatcher) }; watching = false }
         session?.let { it.isActive = false; it.release() }; session = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
+        playing = false
+        if (watching) { runCatching { unregisterReceiver(volumeWatcher) }; watching = false }
         player?.release(); player = null
         session?.release(); session = null
         super.onDestroy()

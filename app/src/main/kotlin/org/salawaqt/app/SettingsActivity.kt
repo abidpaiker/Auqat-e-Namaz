@@ -2,6 +2,7 @@ package org.salawaqt.app
 
 import android.app.Activity
 import android.app.AlarmManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -40,8 +41,11 @@ class SettingsActivity : Activity() {
     private lateinit var hijriAdjust: EditText
     private lateinit var adjustments: Map<Prayer, EditText>
     private lateinit var shade: Switch
-    private val modes = HashMap<Prayer, Spinner>()
-    private val recordingStatus = HashMap<Prayer, TextView>()
+    private lateinit var bothAsr: Switch
+    private lateinit var asr2Box: LinearLayout
+    private val modes = HashMap<String, Spinner>()          // by event key
+    private val recordingStatus = HashMap<String, TextView>()
+    private val keyOrder = ArrayList<String>()              // request-code ↔ key for the file picker
     private lateinit var manual: Switch
     private lateinit var manualBox: LinearLayout
     private lateinit var manualLat: EditText
@@ -97,6 +101,9 @@ class SettingsActivity : Activity() {
 
         hanafi = switch("Hanafi Asr (shadow ×2, later Asr)", prefs.hanafiAsr)
         root.addView(hanafi)
+        bothAsr = switch("Show both Asr times (Standard and Hanafi), each with its own alert", prefs.showBothAsr)
+        bothAsr.setOnCheckedChangeListener { _, on -> asr2Box.visibility = if (on) View.VISIBLE else View.GONE }
+        root.addView(bothAsr)
 
         hijriAdjust = number("Hijri date ± days", prefs.hijriAdjust.toString(), signed = true)
         root.addView(labelled("Hijri date adjustment (days, to match local moon sighting)", hijriAdjust, inline = true))
@@ -112,8 +119,16 @@ class SettingsActivity : Activity() {
         shade = switch("Always show the next prayer in the notification shade (silent)", prefs.shadeEnabled)
         root.addView(shade)
         root.addView(Ui.space(this, 8))
-        root.addView(Ui.text(this, "For each time choose Silent, Notification (short system sound) or Adhan. With Adhan you can pick your own recording; it is copied into the app, so it keeps working if the original file is deleted.", 13f, dim = true))
-        for (p in Prayer.entries) root.addView(alertRow(p))
+        root.addView(Ui.text(this, "For each time choose Silent, Notification (short system sound) or Adhan. With Adhan, choose one of the bundled reciters or add your own recording; added recordings are copied into the app, so they keep working if the original file is deleted, and can be used for any prayer.", 13f, dim = true))
+        for (p in Prayer.entries) {
+            root.addView(alertRow(p.name))
+            if (p == Prayer.ASR) {
+                asr2Box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = if (prefs.showBothAsr) View.VISIBLE else View.GONE }
+                asr2Box.addView(alertRow(Prefs.ASR2))
+                root.addView(asr2Box)
+            }
+        }
+        root.addView(Ui.button(this, "Manage recordings…") { manageRecordings() })
         root.addView(Ui.text(this, "While the adhan plays, press volume-down to stop it.", 13f, dim = true))
         root.addView(Ui.space(this, 16))
         if (Build.VERSION.SDK_INT >= 31) {
@@ -157,6 +172,11 @@ class SettingsActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(root); Ui.fitSystemBars(this) })
     }
 
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN && AdhanService.playing) { AdhanService.stop(this); return true }
+        return super.onKeyDown(keyCode, event)
+    }
+
     override fun onPause() {
         super.onPause()
         save()
@@ -169,10 +189,11 @@ class SettingsActivity : Activity() {
         customIsha.text.toString().toFloatOrNull()?.let { if (it in 5f..25f) prefs.customIshaAngle = it }
         customIshaMin.text.toString().toIntOrNull()?.let { if (it in 0..180) prefs.customIshaInterval = it }
         prefs.hanafiAsr = hanafi.isChecked
+        prefs.showBothAsr = bothAsr.isChecked
         prefs.hijriAdjust = hijriAdjust.text.toString().toIntOrNull() ?: 0
         for ((p, e) in adjustments) prefs.setAdjustment(p, e.text.toString().toIntOrNull() ?: 0)
         prefs.shadeEnabled = shade.isChecked
-        for ((p, s) in modes) prefs.setAlertMode(p, s.selectedItemPosition)
+        for ((k, s) in modes) prefs.setAlertMode(k, s.selectedItemPosition)
         val lat = manualLat.text.toString().toDoubleOrNull()
         val lng = manualLng.text.toString().toDoubleOrNull()
         val valid = lat != null && lng != null && lat in -90.0..90.0 && lng in -180.0..180.0
@@ -180,40 +201,38 @@ class SettingsActivity : Activity() {
         prefs.manualLocation = manual.isChecked && valid
     }
 
-    // ---- per-prayer alert rows ----
+    // ---- per-event alert rows ----
 
     /**
-     * "Fajr  [Silent | Notification | Adhan]", and — only while Adhan is selected — the recording in use plus
-     * Choose… / Default / Test. Sunrise has no bundled adhan, so its third choice is a sound of your own.
+     * "Fajr  [Silent | Notification | Adhan]", and — only while Adhan is selected — the recording in use with
+     * Change… / Test. Sunrise has no bundled adhan, so its third choice is a sound of your own.
      */
-    private fun alertRow(p: Prayer): View {
+    private fun alertRow(key: String): View {
+        val isSunrise = key == Prayer.SUNRISE.name
+        val label = when (key) { Prefs.ASR2 -> "Asr (other rule)"; Prayer.ASR.name -> "Asr"; else -> Prayer.valueOf(key).label }
+        val requestCode = PICK_BASE + keyOrder.size; keyOrder += key
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(2)) }
         val head = Ui.row(this)
-        val name = Ui.text(this, p.label, 16f)
+        val name = Ui.text(this, label, 16f)
         Ui.weight(name, 1f)
-        val options = listOf("Silent", "Notification", if (p == Prayer.SUNRISE) "Chosen sound" else "Adhan")
+        val options = listOf("Silent", "Notification", if (isSunrise) "Chosen sound" else "Adhan")
         val spinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, options)
-            setSelection(prefs.alertMode(p))
+            setSelection(prefs.alertMode(key))
         }
         head.addView(name); head.addView(spinner)
         box.addView(head)
 
         val recording = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, dp(4))
-            visibility = if (prefs.alertMode(p) == Prefs.ADHAN) View.VISIBLE else View.GONE
+            visibility = if (prefs.alertMode(key) == Prefs.ADHAN) View.VISIBLE else View.GONE
         }
         val status = Ui.text(this, "", 13f, dim = true)
         val buttons = Ui.row(this)
-        val choose = Ui.button(this, "Choose…") {
-            // The system picker needs no storage permission; we copy the file into app storage right after.
-            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*")
-            startActivityForResult(i, PICK_BASE + p.ordinal)
-        }
-        val default = Ui.button(this, "Default") { prefs.clearAdhan(p); showRecording(p) }
-        val test = Ui.button(this, "Test") { playTest(p) }
-        Ui.weight(choose, 1f); Ui.weight(default, 1f); Ui.weight(test, 1f)
-        buttons.addView(choose); buttons.addView(default); buttons.addView(test)
+        val change = Ui.button(this, "Change…") { chooseRecording(key, requestCode) }
+        val test = Ui.button(this, "Test") { playTest(key) }
+        Ui.weight(change, 1f); Ui.weight(test, 1f)
+        buttons.addView(change); buttons.addView(test)
         recording.addView(status); recording.addView(buttons)
         box.addView(recording)
 
@@ -221,9 +240,38 @@ class SettingsActivity : Activity() {
             override fun onItemSelected(a: AdapterView<*>?, v: View?, pos: Int, id: Long) { recording.visibility = if (pos == Prefs.ADHAN) View.VISIBLE else View.GONE }
             override fun onNothingSelected(a: AdapterView<*>?) {}
         }
-        modes[p] = spinner; recordingStatus[p] = status
-        showRecording(p)
+        modes[key] = spinner; recordingStatus[key] = status
+        showRecording(key)
         return box
+    }
+
+    /** Radio list: the bundled recording, every recording the user has added, and "Add a recording…". */
+    private fun chooseRecording(key: String, requestCode: Int) {
+        val bundled = Bundled.forKey(key)
+        val lib = prefs.recordings()
+        // Rows: [bundled…] [user recordings…] [Add a recording…]; Sunrise has no bundled adhan, only the notification sound.
+        val labels = ArrayList<String>()
+        val ids = ArrayList<String?>()
+        if (key == Prayer.SUNRISE.name) { labels += "Notification sound"; ids += null }
+        for (b in bundled) { labels += b.label; ids += b.id }
+        for (r in lib) { labels += r.name; ids += r.id }
+        labels += "Add a recording…"
+        val current = prefs.selection(key) ?: (if (key == Prayer.SUNRISE.name) null else Bundled.default(key).id)
+        val checked = ids.indexOf(current).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Recording for ${Events.label(prefs, key)}")
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { d, which ->
+                if (which == labels.size - 1) { d.dismiss(); pickFile(requestCode) }
+                else { prefs.setSelection(key, ids[which]); showRecording(key); d.dismiss() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pickFile(requestCode: Int) {
+        // The system picker needs no storage permission; we copy the file into app storage right after.
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*")
+        startActivityForResult(i, requestCode)
     }
 
     @Deprecated("Deprecated in Java")
@@ -231,12 +279,13 @@ class SettingsActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data ?: return
         if (resultCode != RESULT_OK) return
-        val p = Prayer.entries.getOrNull(requestCode - PICK_BASE) ?: return
-        val name = displayName(uri)
-        recordingStatus[p]?.text = "Copying…"
-        // Copy into files/adhan/<PRAYER> on a background thread; the picker's URI is only valid briefly, the copy is ours for good.
+        val key = keyOrder.getOrNull(requestCode - PICK_BASE) ?: return
+        val suggested = displayName(uri).substringBeforeLast('.')
+        recordingStatus[key]?.text = "Copying…"
+        // Copy into files/adhan/lib/<id> on a background thread; the picker's URI is only valid briefly, the copy is ours for good.
+        val id = "r" + System.currentTimeMillis()
         Thread {
-            val dest = File(filesDir, "adhan/${p.name}")
+            val dest = File(filesDir, "adhan/lib/$id")
             val tmp = File(dest.path + ".tmp")
             val ok = runCatching {
                 dest.parentFile?.mkdirs()
@@ -245,16 +294,49 @@ class SettingsActivity : Activity() {
             }.isSuccess
             if (!ok) tmp.delete()
             runOnUiThread {
-                if (ok) prefs.setAdhanName(p, name)
-                else Toast.makeText(this, "Could not read that file", Toast.LENGTH_LONG).show()
-                showRecording(p)
+                if (ok) {
+                    // Register and select it first, so nothing is lost if the name dialog goes away; then name it.
+                    prefs.addRecording(id, suggested.ifEmpty { "Recording" }); prefs.setSelection(key, id); showRecording(key)
+                    askName(suggested) { name -> prefs.renameRecording(id, name); refreshAllRecordings() }
+                }
+                else { Toast.makeText(this, "Could not read that file", Toast.LENGTH_LONG).show(); showRecording(key) }
             }
         }.start()
     }
 
-    private fun showRecording(p: Prayer) {
-        recordingStatus[p]?.text = prefs.adhanName(p)?.let { "Recording: $it" }
-            ?: if (p == Prayer.SUNRISE) "No sound chosen yet — the notification sound will be used" else "Bundled recording"
+    /** "Name this recording" with the file name pre-filled. */
+    private fun askName(initial: String, onDone: (String) -> Unit) {
+        val input = EditText(this).apply { setText(initial); setSelectAllOnFocus(true); inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+        AlertDialog.Builder(this).setTitle("Name this recording").setView(box)
+            .setPositiveButton("Save") { _, _ -> onDone(input.text.toString().trim().ifEmpty { initial.ifEmpty { "Recording" } }) }
+            .setCancelable(false)
+            .show()
+    }
+
+    /** List of added recordings; tap one to rename or delete it. */
+    private fun manageRecordings() {
+        val lib = prefs.recordings()
+        if (lib.isEmpty()) { Toast.makeText(this, "No recordings added yet. Set a prayer to Adhan and tap Change… to add one.", Toast.LENGTH_LONG).show(); return }
+        AlertDialog.Builder(this).setTitle("Your recordings")
+            .setItems(lib.map { it.name }.toTypedArray()) { _, which ->
+                val r = lib[which]
+                AlertDialog.Builder(this).setTitle(r.name)
+                    .setItems(arrayOf("Rename", "Delete")) { _, action ->
+                        if (action == 0) askName(r.name) { n -> prefs.renameRecording(r.id, n); refreshAllRecordings() }
+                        else AlertDialog.Builder(this).setMessage("Delete \u201c${r.name}\u201d? Prayers using it go back to the default recording.")
+                            .setPositiveButton("Delete") { _, _ -> prefs.removeRecording(r.id); refreshAllRecordings() }
+                            .setNegativeButton("Cancel", null).show()
+                    }.show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun refreshAllRecordings() { for (k in recordingStatus.keys) showRecording(k) }
+
+    private fun showRecording(key: String) {
+        recordingStatus[key]?.text = "Recording: " + prefs.adhanName(key)
     }
 
     private fun displayName(uri: Uri): String {
@@ -264,11 +346,12 @@ class SettingsActivity : Activity() {
         return name ?: (uri.lastPathSegment ?: "chosen file")
     }
 
-    private fun playTest(p: Prayer) {
+    private fun playTest(key: String) {
         Notifications.ensureChannels(this)
-        if (p == Prayer.SUNRISE && prefs.adhanFile(p) == null) { Notifications.showPrayer(this, p.label, System.currentTimeMillis()); return }
+        val label = Events.label(prefs, key)
+        if (key == Prayer.SUNRISE.name && prefs.adhanFile(key) == null) { Notifications.showPrayer(this, label, System.currentTimeMillis()); return }
         val svc = Intent(this, AdhanService::class.java).setAction(AdhanService.ACTION_PLAY)
-            .putExtra(Scheduler.EXTRA_PRAYER, p.label).putExtra(Scheduler.EXTRA_AT, System.currentTimeMillis())
+            .putExtra(Scheduler.EXTRA_KEY, key).putExtra(Scheduler.EXTRA_PRAYER, label).putExtra(Scheduler.EXTRA_AT, System.currentTimeMillis())
         startForegroundService(svc)
     }
 

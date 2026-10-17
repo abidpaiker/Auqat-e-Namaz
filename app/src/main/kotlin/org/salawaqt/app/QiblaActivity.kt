@@ -36,6 +36,7 @@ class QiblaActivity : Activity(), SensorEventListener {
     private lateinit var bearingText: TextView
     private lateinit var headingText: TextView
     private lateinit var warning: TextView
+    private lateinit var fieldLine: TextView     // always visible: measured vs expected field
 
     private var sensors: SensorManager? = null
     private var rotation: Sensor? = null
@@ -44,10 +45,15 @@ class QiblaActivity : Activity(), SensorEventListener {
     private var magnetic: Sensor? = null
 
     private var declination = 0f
+    private var expectedField = Float.NaN      // µT, from the world magnetic model for this position
+    private var expectedDip = Float.NaN        // degrees below horizontal (inclination)
     private var qiblaBearing = 0.0
     private var heading = Float.NaN            // smoothed true heading, degrees
     private var sensorAccuracy = SensorManager.SENSOR_STATUS_ACCURACY_HIGH
-    private var fieldStrength = Float.NaN      // µT
+    private var fieldStrength = Float.NaN      // µT, measured (smoothed)
+    private var dip = Float.NaN                // degrees, measured: angle of the field below horizontal
+    private var lastMag: FloatArray? = null
+    private var lastAcc: FloatArray? = null
     private val rotationMatrix = FloatArray(9)
     private val orientation = FloatArray(3)
     private var gravity: FloatArray? = null
@@ -65,8 +71,9 @@ class QiblaActivity : Activity(), SensorEventListener {
         compass = CompassView(this)
         root.addView(compass, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         headingText = Ui.text(this, "", 16f).apply { gravity = Gravity.CENTER }
-        warning = Ui.text(this, "", 15f).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0) }
-        root.addView(headingText); root.addView(warning)
+        fieldLine = Ui.text(this, "", 13f, dim = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
+        warning = Ui.text(this, "", 15f).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }
+        root.addView(headingText); root.addView(fieldLine); root.addView(warning)
         root.addView(Ui.space(this, 12))
         root.addView(Ui.button(this, "Back") { finish() })
         Ui.fitSystemBars(root)
@@ -79,6 +86,7 @@ class QiblaActivity : Activity(), SensorEventListener {
             magnet = sensors?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
         }
         magnetic = sensors?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        if (accel == null) accel = sensors?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)   // needed for the dip angle
     }
 
     override fun onResume() {
@@ -90,7 +98,10 @@ class QiblaActivity : Activity(), SensorEventListener {
             return
         }
         qiblaBearing = Qibla.bearing(where)
-        declination = GeomagneticField(where.latitude.toFloat(), where.longitude.toFloat(), where.elevation.toFloat(), System.currentTimeMillis()).declination
+        val gm = GeomagneticField(where.latitude.toFloat(), where.longitude.toFloat(), where.elevation.toFloat(), System.currentTimeMillis())
+        declination = gm.declination
+        expectedField = gm.fieldStrength / 1000f   // nT → µT
+        expectedDip = gm.inclination
         bearingText.text = String.format(Locale.getDefault(), "%.1f° from true north · %,.0f km to the Kaaba · declination %+.1f°",
             qiblaBearing, Qibla.distanceKm(where), declination)
         compass.hasBearing = true
@@ -98,9 +109,15 @@ class QiblaActivity : Activity(), SensorEventListener {
 
         val sm = sensors ?: return
         if (rotation != null) sm.registerListener(this, rotation, SensorManager.SENSOR_DELAY_UI)
-        else { accel?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }; magnet?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) } }
+        else { magnet?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) } }
+        accel?.let { sm.registerListener(this, it, if (rotation == null) SensorManager.SENSOR_DELAY_UI else SensorManager.SENSOR_DELAY_NORMAL) }
         magnetic?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
         if (magnetic == null) warning.text = "This device has no compass. Use the bearing above with a physical compass or a map."
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN && AdhanService.playing) { AdhanService.stop(this); return true }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onPause() {
@@ -119,11 +136,14 @@ class QiblaActivity : Activity(), SensorEventListener {
                 SensorManager.getOrientation(rotationMatrix, orientation)
                 onHeading(Math.toDegrees(orientation[0].toDouble()).toFloat())
             }
-            Sensor.TYPE_ACCELEROMETER -> { gravity = e.values.clone(); fuse() }
+            Sensor.TYPE_ACCELEROMETER -> { gravity = e.values.clone(); lastAcc = gravity; if (rotation == null) fuse(); measureDip() }
             Sensor.TYPE_MAGNETIC_FIELD -> {
                 val v = e.values
-                fieldStrength = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+                val f = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+                fieldStrength = if (fieldStrength.isNaN()) f else fieldStrength + (f - fieldStrength) * 0.2f
+                lastMag = v.clone()
                 if (rotation == null) { geomag = v.clone(); fuse() }
+                measureDip()
                 updateWarning()
             }
         }
@@ -152,15 +172,50 @@ class QiblaActivity : Activity(), SensorEventListener {
         headingText.text = String.format(Locale.getDefault(), "Heading %.0f° · %s", heading, if (off < 3 || off > 357) "facing the Qibla" else turn)
     }
 
+    /**
+     * The field's angle below horizontal, from the magnetic and gravity vectors. The accelerometer at rest points
+     * *up* (away from the Earth's centre), and the field in the northern hemisphere points *down*, so a negative
+     * dot product means a positive (downward) dip, matching GeomagneticField.inclination.
+     */
+    private fun measureDip() {
+        val m = lastMag ?: return; val a = lastAcc ?: return
+        val mm = sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]); val aa = sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+        if (mm < 1f || aa < 1f) return
+        val cosA = ((m[0] * a[0] + m[1] * a[1] + m[2] * a[2]) / (mm * aa)).coerceIn(-1f, 1f)
+        val d = -Math.toDegrees(Math.asin(cosA.toDouble())).toFloat()
+        dip = if (dip.isNaN()) d else dip + (d - dip) * 0.2f
+    }
+
     private fun updateWarning() {
         val msgs = ArrayList<String>()
         if (sensorAccuracy <= SensorManager.SENSOR_STATUS_ACCURACY_LOW)
             msgs += "Compass needs calibration: move the phone in a figure-8."
-        if (!fieldStrength.isNaN() && (fieldStrength < 25f || fieldStrength > 65f))
-            msgs += "Magnetic interference (~%d µT). Move away from metal, magnets, cars and electronics.".format(Locale.getDefault(), (fieldStrength / 5).toInt() * 5)
+        // Compare what the phone measures with what the Earth's field should be here (world magnetic model):
+        // strength within 15 %, dip within 10°. Nearby metal or magnets fail one or both, even when the strength
+        // alone would still look plausible.
+        val haveExpected = !expectedField.isNaN()
+        val strengthBad = !fieldStrength.isNaN() && if (haveExpected) Math.abs(fieldStrength - expectedField) > 0.15f * expectedField else (fieldStrength < 25f || fieldStrength > 65f)
+        val dipBad = haveExpected && !dip.isNaN() && Math.abs(dip - expectedDip) > 10f
+        if (strengthBad || dipBad)
+            msgs += "Magnetic interference. Move away from metal, magnets, cars and electronics."
         val t = msgs.joinToString("\n")
         if (warning.text.toString() != t) warning.text = t   // avoid relayout on every sensor event
         compass.unreliable = msgs.isNotEmpty()
+
+        val cal = when {
+            sensorAccuracy >= SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "good"
+            sensorAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "fair"
+            else -> "low"
+        }
+        val line = if (fieldStrength.isNaN()) "" else String.format(Locale.getDefault(),
+            "Field %.0f µT (expected %s) · dip %s° (expected %s) · calibration %s",
+            fieldStrength, if (haveExpected) "%.0f".format(Locale.getDefault(), expectedField) else "?",
+            if (dip.isNaN()) "?" else "%.0f".format(Locale.getDefault(), dip),
+            if (haveExpected) "%.0f".format(Locale.getDefault(), expectedDip) else "?", cal)
+        if (fieldLine.text.toString() != line) {
+            fieldLine.text = line
+            fieldLine.setTextColor(if (strengthBad || dipBad) Color.rgb(230, 150, 20) else Ui.color(this, android.R.attr.textColorSecondary))
+        }
     }
 
     private fun norm(a: Float): Float { var x = a % 360f; if (x < 0) x += 360f; return x }

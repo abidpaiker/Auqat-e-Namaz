@@ -19,7 +19,7 @@ WHAT IT DOES
 • Islamic (Hijri) date that changes at Maghrib, adjustable ±2 days to match local moon sighting
 • Qibla compass, with a warning when the phone's compass is being disturbed by metal or magnets
 • For each prayer, your choice: silent, a short notification, or the adhan. Sunrise is silent unless you want it
-• Two bundled adhan recordings (a separate one for Fajr), or pick any audio file on your phone for any prayer
+• Seven bundled adhan recordings (Makkah, Madina, Nasser al-Qatami, Majed al-Hamathani, Al-Ossi, and two for Fajr), or add any audio file from your phone and name it
 • Exact alarms that survive sleep mode; volume-down stops the adhan
 • An optional always-visible line in the notification shade with the next prayer and today's times
 • Nearest town shown next to your coordinates, from an offline list
@@ -89,6 +89,9 @@ by an exact alarm; shows a notification with a Stop button; stops itself when th
 **REQUEST_IGNORE_BATTERY_OPTIMIZATIONS**
 Offered as an opt-in button in Settings because several manufacturers' battery managers kill scheduled alarms; the
 app's alerts are useless if the alarm never fires. Not requested automatically.
+
+## Release notes for version 0.5
+New: a short first-run setup (location, calculation method, Asr rule, alerts, battery). Twelve more calculation methods, including Moonsighting Committee and a United Kingdom method matched to the London Unified timetable. Option to show both Asr times, each with its own alert. The Qibla compass now checks the measured field against the Earth's expected field and always shows the reading.
 
 ## Release notes for version 0.4 (first Play release)
 First release on Google Play. Offline prayer times, next-prayer countdown, Hijri date, Qibla compass, per-prayer

@@ -35,29 +35,29 @@ class AlarmReceiver : BroadcastReceiver() {
 
     private fun fire(ctx: Context, intent: Intent) {
         val prefs = Prefs(ctx)
-        val prayerName = intent.getStringExtra(Scheduler.EXTRA_PRAYER)
+        val key = intent.getStringExtra(Scheduler.EXTRA_KEY)
+        val label = intent.getStringExtra(Scheduler.EXTRA_PRAYER) ?: "Prayer"
         val at = intent.getLongExtra(Scheduler.EXTRA_AT, 0L)
 
         // Cheap opportunistic location refresh (last known only, no active request in the background).
         Locator.lastKnown(ctx)?.let { Locator.store(prefs, it) }
 
         val late = System.currentTimeMillis() - at
-        val prayer = prayerName?.let { runCatching { Prayer.valueOf(it) }.getOrNull() }
+        val mode = if (key == null) Prefs.SILENT else prefs.alertMode(key)
         // If the device was off and the alarm is delivered far too late, stay quiet rather than announce a prayer that passed.
-        val mode = if (prayer == null) Prefs.SILENT else prefs.alertMode(prayer)
-        if (prayer != null && mode != Prefs.SILENT && late < 30 * 60_000L) {
-            // Remember what fired, so moving to a place where this prayer is "later" does not fire it a second time.
-            prefs.lastFired = "${prayer.name}|${Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate()}"
+        if (key != null && mode != Prefs.SILENT && late < 30 * 60_000L) {
+            // Remember what fired, so moving to a place where this event is "later" does not fire it a second time.
+            prefs.lastFired = "$key|${Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate()}"
             Notifications.ensureChannels(ctx)
             // Sunrise has no bundled adhan: "sound" there means a chosen file, else the plain notification.
-            val playAudio = mode == Prefs.ADHAN && (prayer != Prayer.SUNRISE || prefs.adhanFile(prayer) != null)
+            val playAudio = mode == Prefs.ADHAN && (key != Prayer.SUNRISE.name || prefs.adhanFile(key) != null)
             if (playAudio) {
                 val svc = Intent(ctx, AdhanService::class.java).setAction(AdhanService.ACTION_PLAY)
-                    .putExtra(Scheduler.EXTRA_PRAYER, prayer.label).putExtra(Scheduler.EXTRA_AT, at)
+                    .putExtra(Scheduler.EXTRA_KEY, key).putExtra(Scheduler.EXTRA_PRAYER, label).putExtra(Scheduler.EXTRA_AT, at)
                 // Exact alarms grant the background-start exemption; an inexact fallback alarm may not (Android 12+).
-                try { ctx.startForegroundService(svc) } catch (e: IllegalStateException) { Notifications.showPrayer(ctx, prayer.label, at) }
+                try { ctx.startForegroundService(svc) } catch (e: IllegalStateException) { Notifications.showPrayer(ctx, label, at) }
             } else {
-                Notifications.showPrayer(ctx, prayer.label, at)
+                Notifications.showPrayer(ctx, label, at)
             }
         }
         Scheduler.reschedule(ctx)

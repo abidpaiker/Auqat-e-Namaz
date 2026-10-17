@@ -64,15 +64,16 @@ object Notifications {
         return b.build()
     }
 
-    /** Post or refresh the silent shade line. Called whenever the alarm is (re)scheduled, i.e. after every prayer. */
-    fun showStatus(ctx: Context, up: org.salawaqt.engine.Upcoming, today: org.salawaqt.engine.PrayerTimes) {
+    /** Post or refresh the silent shade line. Called whenever the alarm is (re)scheduled, i.e. after every event. */
+    fun showStatus(ctx: Context, next: Event, today: List<Event>) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         val fmt = Ui.timeFormatter(ctx)
+        val zone = java.time.ZoneId.systemDefault()
         val open = PendingIntent.getActivity(ctx, 4, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val line = org.salawaqt.engine.Prayer.entries.joinToString("  ·  ") { "${it.label} ${fmt.format(today.at(it))}" }
+        val line = today.joinToString("  ·  ") { "${it.label} ${fmt.format(it.time.atZone(zone))}" }
         val n = Notification.Builder(ctx, CHANNEL_STATUS)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("${up.prayer.label} at ${fmt.format(up.time)}")
+            .setContentTitle("${next.label} at ${fmt.format(next.time.atZone(zone))}")
             .setContentText(line)
             .setStyle(Notification.BigTextStyle().bigText(line))
             .setContentIntent(open)

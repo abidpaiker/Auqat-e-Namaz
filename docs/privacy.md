@@ -41,6 +41,12 @@ the app deletes all of it.
 
 The app is suitable for all ages and collects no data from anyone.
 
+## Data bundled in the app
+
+The app ships with an offline list of towns (GeoNames), a set of adhan recordings, and the London Unified
+Prayer Timetable (East London Mosque / Hizbul Ulama, via londonprayertimes.com) used for London. None of these
+involve any network access; they are read from the app's own files.
+
 ## Open source
 
 The complete source code is public at https://github.com/abidpaiker/auqat-e-namaz under the MIT licence, so anyone

@@ -41,6 +41,7 @@
         <!-- Portrait-locked so the compass needs no coordinate remapping -->
         <activity android:name=".QiblaActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".SetupActivity" android:exported="false" />
 
         <receiver android:name=".AlarmReceiver" android:exported="false" />
 

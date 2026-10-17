@@ -143,8 +143,8 @@ class EdgeCaseTest {
             val t = PrayerCalculator.compute(d, z, c, CalculationParams(m))
             val fajrToSunrise = ChronoUnit.MINUTES.between(t.fajr, t.sunrise)
             val maghribToIsha = ChronoUnit.MINUTES.between(sunset, t.isha)
-            assertTrue("${m.id} fajr→sunrise $fajrToSunrise", fajrToSunrise in 60..110)
-            assertTrue("${m.id} maghrib→isha $maghribToIsha", maghribToIsha in 55..100)
+            assertTrue("${m.id} fajr→sunrise $fajrToSunrise", fajrToSunrise in 45..110)   // UOIF France (12°) is the shortest
+            assertTrue("${m.id} maghrib→isha $maghribToIsha", maghribToIsha in 45..100)
             assertTrue(t.notes.isEmpty())
         }
         // Larger Fajr angle → earlier Fajr, always.
