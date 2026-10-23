@@ -57,17 +57,39 @@ object Ui {
         return id
     }
 
-    /** The "prominent disclosure" Google Play requires before the system's "Allow all the time" prompt. */
-    fun backgroundLocationDialog(activity: android.app.Activity, onContinue: () -> Unit) {
+    /**
+     * Prominent disclosure (Google Play User Data policy) shown immediately before the system's location prompt.
+     * Every foreground location request goes through this; the system prompt appears only after "Continue".
+     */
+    fun locationDisclosureDialog(activity: android.app.Activity, onContinue: () -> Unit) {
         android.app.AlertDialog.Builder(activity)
-            .setTitle("Location while travelling")
-            .setMessage("Auqat-e-Namaz can check your position a few minutes before each prayer, even when the app is " +
-                "closed, so the adhan is for where you are now and not where you were this morning.\n\n" +
-                "On the next screen choose \u201cAllow all the time\u201d to enable this. Your location is used only to " +
-                "calculate prayer times and never leaves the phone; the app has no internet access.\n\n" +
-                "If you skip this, times update whenever you open the app.")
+            .setTitle("Use your location")
+            .setMessage("Auqat-e-Namaz collects location data to calculate prayer times and the Qibla direction for " +
+                "where you are.\n\n" +
+                "Your location is used only for this, is kept only on this phone and is never shared or sent " +
+                "anywhere \u2014 the app has no internet access.\n\n" +
+                "On the next screen Android will ask you to allow location. You can refuse and type a location in " +
+                "Settings instead.")
             .setPositiveButton("Continue") { _, _ -> onContinue() }
             .setNegativeButton("Not now", null)
+            .setCancelable(false)
+            .show()
+    }
+
+    /** Prominent disclosure Google Play requires immediately before the "Allow all the time" (background) prompt. */
+    fun backgroundLocationDialog(activity: android.app.Activity, onContinue: () -> Unit) {
+        android.app.AlertDialog.Builder(activity)
+            .setTitle("Location in the background")
+            .setMessage("Auqat-e-Namaz collects location data to keep prayer times and adhan alerts correct for " +
+                "where you are now, even when the app is closed or not in use. It checks your position a few " +
+                "minutes before each prayer, so when you travel the adhan is for your new place.\n\n" +
+                "Your location is used only to calculate prayer times, is kept only on this phone and is never " +
+                "shared or sent anywhere \u2014 the app has no internet access.\n\n" +
+                "To allow this, choose \u201cAllow all the time\u201d on the next screen. If you choose \u201cNot " +
+                "now\u201d, everything still works and times update whenever you open the app.")
+            .setPositiveButton("Continue") { _, _ -> onContinue() }
+            .setNegativeButton("Not now", null)
+            .setCancelable(false)
             .show()
     }
 

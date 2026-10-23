@@ -75,8 +75,11 @@ take a single fresh position fix a few minutes before each scheduled prayer alar
 since last opening the app is alerted at the correct time for where they now are. No location data is stored beyond
 the most recent fix, and none is transmitted; the app does not declare the INTERNET permission. Users can decline
 background location (the app then refreshes only when opened) or enter a manual location.
-Video: a short screen recording showing the main screen with times, Settings → "Use a manual location", and the
-permission prompt explaining "Allow all the time" — Google asks for this; record 30–60 s on the phone.
+Video (30–60 s, recorded on the phone after a fresh install): first-run setup → "Allow location" → the in-app
+disclosure "Use your location" → Continue → system prompt "While using the app" → the in-app disclosure "Location in
+the background" (it says the app collects location data even when the app is closed or not in use) → Continue →
+system settings page → "Allow all the time" → back in the app, then the main screen with the times. The in-app
+disclosure must be visible in full in the video, immediately before each system prompt.
 
 **Exact alarm permission (USE_EXACT_ALARM)**
 The app's core function is time-critical alerts: notifying the user, or playing the adhan, at the precise minute a
@@ -89,6 +92,9 @@ by an exact alarm; shows a notification with a Stop button; stops itself when th
 **REQUEST_IGNORE_BATTERY_OPTIMIZATIONS**
 Offered as an opt-in button in Settings because several manufacturers' battery managers kill scheduled alarms; the
 app's alerts are useless if the alarm never fires. Not requested automatically.
+
+## Release notes for version 0.5.1
+Clearer explanation before the app asks for location.
 
 ## Release notes for version 0.5
 New: a short first-run setup (location, calculation method, Asr rule, alerts, battery). Twelve more calculation methods, including Moonsighting Committee and a United Kingdom method matched to the London Unified timetable. Option to show both Asr times, each with its own alert. The Qibla compass now checks the measured field against the Earth's expected field and always shows the reading.

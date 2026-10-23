@@ -149,7 +149,9 @@ class SetupActivity : Activity() {
 
     private fun askLocation() {
         if (!Locator.hasPermission(this)) {
-            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
+            Ui.locationDisclosureDialog(this) {
+                requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
+            }
         } else askBackground()
     }
 

@@ -138,10 +138,16 @@ class MainActivity : Activity() {
     private fun requestPermissionsIfNeeded() {
         if (prefs.permissionsAsked || !prefs.setupDone) return   // the first-run setup asks in its own order
         val wanted = ArrayList<String>()
-        if (!Locator.hasPermission(this)) { wanted += Manifest.permission.ACCESS_FINE_LOCATION; wanted += Manifest.permission.ACCESS_COARSE_LOCATION }
+        val needLocation = !Locator.hasPermission(this)
+        if (needLocation) { wanted += Manifest.permission.ACCESS_FINE_LOCATION; wanted += Manifest.permission.ACCESS_COARSE_LOCATION }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             wanted += Manifest.permission.POST_NOTIFICATIONS
-        if (wanted.isNotEmpty()) requestPermissions(wanted.toTypedArray(), 1) else prefs.permissionsAsked = true
+        when {
+            wanted.isEmpty() -> prefs.permissionsAsked = true
+            // Location is personal data: the disclosure must come immediately before the system prompt.
+            needLocation -> { prefs.permissionsAsked = true; Ui.locationDisclosureDialog(this) { requestPermissions(wanted.toTypedArray(), 1) } }
+            else -> requestPermissions(wanted.toTypedArray(), 1)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
